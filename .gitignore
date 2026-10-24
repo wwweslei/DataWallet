@@ -1,0 +1,40 @@
+-- Active: 1792871698484@@127.0.0.1@3306
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambientes virtuais (Poetry e outros)
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testes e cobertura
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Builds e pacotes Python
+build/
+dist/
+*.egg-info/
+
+# Configurações e segredos locais
+.env
+.env.*
+!.env.example
+database/tesouro.db
+*.xlsx
+
+# IDE e sistema operacional
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+/csv
+/xlsx

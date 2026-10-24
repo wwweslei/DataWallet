@@ -1,0 +1,28 @@
+[project]
+name = "tesouro-tracker"
+version = "0.1.0"
+description = "Aplicação Streamlit para acompanhamento de investimentos no Tesouro Direto"
+authors = [{ name = "DataWallet" }]
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "streamlit>=1.57,<2.0",
+    "pandas>=2.2,<4.0",
+    "numpy>=1.26,<3.0",
+    "plotly>=5.24,<8.0",
+    "openpyxl>=3.1,<4.0",
+    "fpdf2>=2.8,<3.0",
+    "requests>=2.32,<3.0",
+    "beautifulsoup4>=4.12,<5.0",
+    "sqlalchemy>=2.0,<3.0",
+    "ruff (>=0.17.2,<0.18.0)",
+]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8,<10"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
