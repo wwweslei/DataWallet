@@ -17,14 +17,17 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 
 from config import BASE_DIR
-from database import Database
-from services.consolidador import (
+from database.repository import Database
+from modules.tesouro.services.consolidador import (
     PosicaoConsolidada,
     PosicaoImportada,
     consolidar_posicoes,
     normalizar_ticker,
 )
-from services.mapeador_colunas import mapear_colunas, normalizar_texto
+from modules.tesouro.services.mapeador_colunas import (
+    mapear_colunas,
+    normalizar_texto,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -6,14 +6,17 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from database import Database
-from services.consolidador import PosicaoImportada, consolidar_posicoes
-from services.carteira import CarteiraService
-from services.importador_xlsx import (
+from database.repository import Database
+from modules.tesouro.services.consolidador import (
+    PosicaoImportada,
+    consolidar_posicoes,
+)
+from modules.tesouro.services.carteira import CarteiraService
+from modules.tesouro.services.importador_xlsx import (
     _numero,
     importar_planilhas_corretora,
 )
-from services.mapeador_colunas import mapear_colunas
+from modules.tesouro.services.mapeador_colunas import mapear_colunas
 
 
 ROOT = Path(__file__).parents[1]

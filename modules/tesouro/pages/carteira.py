@@ -5,11 +5,12 @@ from datetime import date
 
 import streamlit as st
 
-from config import DATABASE_PATH, TIPOS_TITULO
-from database import Database
-from models.titulo import Titulo
-from services.carteira import CarteiraService
-from utils.helpers import formatar_moeda
+from config import DATABASE_PATH
+from database.repository import Database
+from modules.tesouro.config import TIPOS_TITULO
+from modules.tesouro.models.titulo import Titulo
+from modules.tesouro.services.carteira import CarteiraService
+from modules.tesouro.utils.helpers import formatar_moeda
 
 logger = logging.getLogger(__name__)
 database = Database(DATABASE_PATH)
@@ -182,6 +183,11 @@ ranking = service.obter_ranking()
 if ranking.empty:
     st.info("Nenhuma posição cadastrada.")
 else:
+    st.caption(
+        "Juros semestrais são estimativas de um cupom com base no valor atual. "
+        "Rendimentos mostram a valorização ou desvalorização desde o investimento; "
+        "os valores não incluem cupons já recebidos."
+    )
     st.dataframe(
         ranking.drop(columns=["id"]),
         hide_index=True,
@@ -192,6 +198,13 @@ else:
             "Atual (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
             "Lucro (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
             "Rentabilidade (%)": st.column_config.NumberColumn(format="%.2f%%"),
+            "Juros semestrais estimados (R$)": st.column_config.NumberColumn(
+                format="R$ %.2f"
+            ),
+            "Rendimentos (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Juros + rendimentos (R$)": st.column_config.NumberColumn(
+                format="R$ %.2f"
+            ),
         },
     )
     st.caption(

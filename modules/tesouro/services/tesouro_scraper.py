@@ -16,22 +16,19 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
-from sqlalchemy import DateTime, Float, Integer, String, URL, create_engine, select
+from sqlalchemy import URL, DateTime, Float, Integer, String, create_engine, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from urllib3.util.retry import Retry
 
 from config import DATABASE_PATH
-from database import Database
-from models.titulo import Titulo
+from database.repository import Database
+from modules.tesouro.models.titulo import Titulo
 
 logger = logging.getLogger(__name__)
 
-URL_COTACOES = (
-    "https://www.tesourodireto.com.br/"
-    "produtos/dados-sobre-titulos/rendimento-dos-titulos"
-)
+URL_COTACOES = "https://www.tesourodireto.com.br/o/rentabilidade/investir"
 USER_AGENT = (
     "Mozilla/5.0 (compatible; TesouroTracker/1.0; "
     "+https://www.tesourodireto.com.br/)"
@@ -39,7 +36,7 @@ USER_AGENT = (
 
 
 class ScraperError(RuntimeError):
-    """Indica falha HTTP ou mudança incompatível na página pública."""
+    """Indica falha HTTP ou mudança incompatível na fonte pública."""
 
 
 class Base(DeclarativeBase):
@@ -138,6 +135,12 @@ def _vencimento(valor: object) -> str | None:
     texto = str(valor).strip()
     if not texto:
         return None
+    data_iso = re.match(r"^\d{4}-\d{2}-\d{2}", texto)
+    if data_iso:
+        try:
+            return datetime.fromisoformat(data_iso.group()).date().isoformat()
+        except ValueError:
+            pass
     try:
         data = pd.to_datetime(texto, dayfirst=True, errors="coerce")
     except (TypeError, ValueError, OverflowError):
@@ -243,7 +246,10 @@ class TesouroDiretoScraper:
         )
         self.session = requests.Session()
         self.session.headers.update(
-            {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+            {
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json, text/plain, */*",
+            }
         )
         self.session.mount("https://", HTTPAdapter(max_retries=politica_retry))
         self.session.mount("http://", HTTPAdapter(max_retries=politica_retry))
@@ -314,6 +320,59 @@ class TesouroDiretoScraper:
                         preco_compra=preco_compra,
                         preco_venda=preco_venda,
                         data_coleta=coletada_em,
+                    )
+                )
+        return cotacoes
+
+    @staticmethod
+    def _parsear_json(
+        conteudo: object,
+        coletada_em: datetime,
+    ) -> list[CotacaoTesouro]:
+        """Converte o JSON de rendimentos usado pela página oficial."""
+        if not isinstance(conteudo, dict):
+            return []
+
+        cotacoes: list[CotacaoTesouro] = []
+        for grupo in conteudo.values():
+            if not isinstance(grupo, list):
+                continue
+            for item in grupo:
+                if not isinstance(item, dict):
+                    continue
+                titulo = item.get("treasuryBondName")
+                if not isinstance(titulo, str) or not titulo.strip():
+                    continue
+                titulo = titulo.strip()
+                taxa_compra = _texto_taxa(
+                    item.get("investmentProfitabilityIndexerName")
+                )
+                taxa_venda = _texto_taxa(
+                    item.get("redemptionProfitabilityFeeIndexerName")
+                )
+                preco_compra = _numero(item.get("unitaryInvestmentValue"))
+                preco_venda = _numero(item.get("unitaryRedemptionValue"))
+                if all(
+                    valor is None
+                    for valor in (taxa_compra, taxa_venda, preco_compra, preco_venda)
+                ):
+                    continue
+                try:
+                    data_coleta = datetime.fromisoformat(
+                        str(item.get("lastMarketPricingDate"))
+                    ).replace(tzinfo=None, microsecond=0)
+                except (TypeError, ValueError):
+                    data_coleta = coletada_em
+                cotacoes.append(
+                    CotacaoTesouro(
+                        titulo=titulo,
+                        tipo=categorizar_titulo(titulo),
+                        vencimento=_vencimento(item.get("maturityDate") or titulo),
+                        taxa_compra=taxa_compra,
+                        taxa_venda=taxa_venda,
+                        preco_compra=preco_compra,
+                        preco_venda=preco_venda,
+                        data_coleta=data_coleta,
                     )
                 )
         return cotacoes
@@ -394,7 +453,7 @@ class TesouroDiretoScraper:
         ]
 
     def _baixar_e_parsear(self) -> tuple[CotacaoTesouro, ...]:
-        """Consulta a página pública com timeout e reporta mudanças do HTML."""
+        """Consulta a fonte pública e interpreta JSON ou HTML com timeout."""
         try:
             resposta = self.session.get(self.url, timeout=self.timeout)
             resposta.raise_for_status()
@@ -402,9 +461,15 @@ class TesouroDiretoScraper:
             logger.exception("Falha ao consultar página pública do Tesouro Direto.")
             raise ScraperError("Não foi possível acessar a página do Tesouro Direto.") from erro
 
-        soup = BeautifulSoup(resposta.content, "html.parser")
         coletada_em = datetime.now().replace(microsecond=0)
-        cotacoes = self._parsear_tabela(soup, coletada_em)
+        try:
+            conteudo = resposta.json()
+        except requests.exceptions.JSONDecodeError:
+            conteudo = None
+        cotacoes = self._parsear_json(conteudo, coletada_em)
+        soup = BeautifulSoup(resposta.content, "html.parser")
+        if not cotacoes:
+            cotacoes = self._parsear_tabela(soup, coletada_em)
         if not cotacoes:
             cotacoes = self._parsear_rotulos(soup, coletada_em)
         if not cotacoes:
@@ -412,7 +477,7 @@ class TesouroDiretoScraper:
             if "mercado fechado" in texto_pagina:
                 motivo = "O mercado está fechado e a página não publicou preços atuais."
             else:
-                motivo = "Não foram encontrados campos de cotação no HTML da página."
+                motivo = "Não foram encontrados campos de cotação na resposta da página."
             logger.warning("Não foi possível extrair cotações: %s", motivo)
             raise ScraperError(
                 f"{motivo} O formato da página pode ter mudado; usando o histórico local."

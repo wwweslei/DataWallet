@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable
 
-from services.mapeador_colunas import normalizar_texto
+from modules.tesouro.services.mapeador_colunas import normalizar_texto
 
 
 @dataclass(frozen=True, slots=True)

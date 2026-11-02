@@ -10,8 +10,8 @@ from typing import Protocol
 
 import requests
 
-from config import API_TIMEOUT_SECONDS, API_URL
-from database import Database
+from database.repository import Database
+from modules.tesouro.config import API_TIMEOUT_SECONDS, API_URL
 
 logger = logging.getLogger(__name__)
 

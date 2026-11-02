@@ -7,15 +7,14 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from database import Database
-from models.titulo import Titulo
-from services.tesouro_scraper import (
+from database.repository import Database
+from modules.tesouro.models.titulo import Titulo
+from modules.tesouro.services.tesouro_scraper import (
     CotacaoTesouro,
     ScraperError,
     TesouroDiretoScraper,
     categorizar_titulo,
 )
-
 
 ROOT = Path(__file__).parents[1]
 
@@ -95,6 +94,39 @@ def test_parseia_tabela_html_e_valores_brasileiros(tmp_path: Path) -> None:
     assert cotacoes[0].taxa_venda == "SELIC + 0,03%"
     assert cotacoes[0].preco_compra == pytest.approx(15123.45)
     assert cotacoes[0].preco_venda == pytest.approx(15120.0)
+
+
+def test_parseia_json_oficial_de_cotacoes(tmp_path: Path) -> None:
+    """Extrai os campos do endpoint JSON usado pela página oficial."""
+    scraper = TesouroDiretoScraper(database=_database(tmp_path))
+    response = Mock()
+    response.json.return_value = {
+        "TesouroLegado": [
+            {
+                "treasuryBondName": "Tesouro Selic 2031",
+                "investmentProfitabilityIndexerName": "SELIC + 0,10%",
+                "redemptionProfitabilityFeeIndexerName": "SELIC + 0,11%",
+                "unitaryInvestmentValue": 20094.02,
+                "unitaryRedemptionValue": 20085.4,
+                "maturityDate": "2031-03-01T00:00",
+                "lastMarketPricingDate": "2026-10-27T15:31:47.803",
+            }
+        ]
+    }
+    response.content = b'{"TesouroLegado":[]}'
+    response.raise_for_status.return_value = None
+    scraper.session.get = Mock(return_value=response)
+
+    cotacoes = scraper.obter_titulos()
+
+    assert len(cotacoes) == 1
+    assert cotacoes[0].titulo == "Tesouro Selic 2031"
+    assert cotacoes[0].vencimento == "2031-03-01"
+    assert cotacoes[0].taxa_compra == "SELIC + 0,10%"
+    assert cotacoes[0].taxa_venda == "SELIC + 0,11%"
+    assert cotacoes[0].preco_compra == pytest.approx(20094.02)
+    assert cotacoes[0].preco_venda == pytest.approx(20085.4)
+    assert cotacoes[0].data_coleta == datetime(2026, 10, 27, 15, 31, 47)
 
 
 def test_historico_preserva_cada_coleta(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ from io import BytesIO
 import pandas as pd
 from fpdf import FPDF
 
-from services.carteira import CarteiraService
+from modules.tesouro.services.carteira import CarteiraService
 
 
 def formatar_moeda(valor: float) -> str:

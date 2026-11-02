@@ -4,7 +4,8 @@ import logging
 
 import streamlit as st
 
-from database import Database
+from database.repository import Database
+from modules.navigation import get_pages
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,30 +24,5 @@ except RuntimeError as erro:
     st.error(str(erro), icon=":material/error:")
     st.stop()
 
-pagina = st.navigation(
-    [
-        st.Page(
-            "pages/dashboard.py",
-            title="Dashboard",
-            icon=":material/dashboard:",
-            default=True,
-        ),
-        st.Page(
-            "pages/carteira.py",
-            title="Carteira",
-            icon=":material/account_balance_wallet:",
-        ),
-        st.Page(
-            "pages/analise.py",
-            title="Análise",
-            icon=":material/query_stats:",
-        ),
-        st.Page(
-            "pages/importacao.py",
-            title="Importação XLSX",
-            icon=":material/upload_file:",
-        ),
-    ],
-    position="top",
-)
+pagina = st.navigation(get_pages(), position="top")
 pagina.run()

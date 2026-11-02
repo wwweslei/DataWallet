@@ -5,10 +5,15 @@ import plotly.express as px
 import streamlit as st
 
 from config import DATABASE_PATH
-from database import Database
-from services.carteira import CarteiraService
-from services.tesouro_scraper import TesouroDiretoScraper
-from utils.helpers import exportar_csv, exportar_excel, exportar_pdf, formatar_moeda
+from database.repository import Database
+from modules.tesouro.services.carteira import CarteiraService
+from modules.tesouro.services.tesouro_scraper import TesouroDiretoScraper
+from modules.tesouro.utils.helpers import (
+    exportar_csv,
+    exportar_excel,
+    exportar_pdf,
+    formatar_moeda,
+)
 
 database = Database(DATABASE_PATH)
 service = CarteiraService(database)
@@ -29,15 +34,15 @@ with col_refresh:
         st.rerun()
 with col_info:
     st.caption(
-        "Cotações públicas extraídas do site do Tesouro Direto. Se o site estiver "
-        "indisponível ou mudar de formato, o último snapshot salvo será usado."
+        "Cotações públicas do Tesouro Direto. Se a fonte estiver indisponível "
+        "ou mudar de formato, o último snapshot salvo será usado."
     )
 
 resultado_atualizacao = st.session_state.get("tesouro_ultima_atualizacao")
 if resultado_atualizacao is not None:
     if resultado_atualizacao.usou_fallback:
         st.warning(
-            "Scraping indisponível; exibindo a última coleta salva. "
+            "Fonte de cotações indisponível; exibindo os últimos snapshots salvos. "
             f"{resultado_atualizacao.erro or ''}",
             title="Usando cache local",
         )
@@ -102,6 +107,12 @@ else:
 
     with st.container(border=True):
         st.subheader("Ranking de desempenho")
+        st.caption(
+            "Juros semestrais são estimativas de um cupom, calculadas sobre o "
+            "valor atual da posição pelas taxas padrão do título. Rendimentos "
+            "representam valorização ou desvalorização desde o investimento; "
+            "os valores não incluem cupons já recebidos."
+        )
         figura = px.bar(
             ranking,
             x="Título",
@@ -121,6 +132,13 @@ else:
                 "Atual (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                 "Lucro (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                 "Rentabilidade (%)": st.column_config.NumberColumn(format="%.2f%%"),
+                "Juros semestrais estimados (R$)": st.column_config.NumberColumn(
+                    format="R$ %.2f"
+                ),
+                "Rendimentos (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Juros + rendimentos (R$)": st.column_config.NumberColumn(
+                    format="R$ %.2f"
+                ),
             },
         )
 

@@ -7,36 +7,63 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config import DATABASE_PATH
-from database import Database
-from services.carteira import CarteiraService
-from services.indicadores import IndicadoresService
+from database.repository import Database
+from modules.tesouro.services.carteira import CarteiraService
+from modules.tesouro.services.indicadores import IndicadoresService
 
 logger = logging.getLogger(__name__)
 database = Database(DATABASE_PATH)
 service = CarteiraService(database)
 titulos = database.listar_titulos()
+ativos = database.listar_ativos()
+posicoes = [
+    ("manual", titulo, f"{titulo.nome} — {titulo.tipo}")
+    for titulo in titulos
+] + [
+    ("importado", ativo, f"{ativo['nome']} — {ativo['categoria']}")
+    for ativo in ativos
+]
 
 st.title("Análise de tendências")
-st.caption("Indicadores calculados somente sobre cotações salvas no histórico.")
+st.caption(
+    "Indicadores calculados somente sobre cotações salvas no histórico, "
+    "incluindo posições importadas com preços disponíveis."
+)
 
-if not titulos:
+if not posicoes:
     st.info("Cadastre um título e registre cotações para começar a análise.")
 else:
-    titulo = st.selectbox(
+    origem, posicao, _ = st.selectbox(
         "Título analisado",
-        titulos,
-        format_func=lambda item: f"{item.nome} — {item.tipo}",
+        posicoes,
+        format_func=lambda item: item[2],
     )
-    registros = database.obter_historico(titulo.id or 0)
+    if origem == "manual":
+        titulo = posicao
+        registros = database.obter_historico(titulo.id or 0)
+        nome_analisado = titulo.nome
+    else:
+        ativo = posicao
+        registros = service.obter_historico_ativo(ativo)
+        nome_analisado = str(ativo["nome"])
     if len(registros) < 2:
-        st.warning("Registre ao menos duas cotações em datas diferentes para gerar análise.")
+        if origem == "importado" and not registros:
+            st.warning(
+                "Não há cotações salvas para esta posição desde a importação. "
+                "Atualize as cotações no Dashboard para iniciar a análise."
+            )
+        else:
+            st.warning(
+                "São necessárias ao menos duas cotações em datas diferentes "
+                "para gerar análise."
+            )
     else:
         precos = pd.Series(
             [float(item["preco"]) for item in registros],
             index=pd.to_datetime([item["data"] for item in registros]),
             dtype="float64",
         )
-        indicadores, tendencia, performance = service.obter_analise(titulo)
+        indicadores, tendencia, performance = service.analisar_precos(precos)
         with st.container(horizontal=True):
             st.metric("Tendência", str(tendencia["tendencia"]), border=True)
             st.metric("Sinal técnico", str(tendencia["sinal"]), border=True)
@@ -76,7 +103,7 @@ else:
             )
         )
         figura.update_layout(
-            title="Preço, médias móveis e bandas de Bollinger",
+            title=f"Preço, médias móveis e bandas de Bollinger — {nome_analisado}",
             hovermode="x unified",
         )
         st.plotly_chart(

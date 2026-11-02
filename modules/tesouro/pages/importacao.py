@@ -6,8 +6,10 @@ import pandas as pd
 import streamlit as st
 
 from config import BASE_DIR, DATABASE_PATH
-from database import Database
-from services.importador_xlsx import importar_planilhas_corretora
+from database.repository import Database
+from modules.tesouro.services.importador_xlsx import (
+    importar_planilhas_corretora,
+)
 
 logger = logging.getLogger(__name__)
 pasta_xlsx = BASE_DIR / "xlsx"

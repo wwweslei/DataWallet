@@ -1,18 +1,19 @@
-"""Persistência SQLite para títulos e histórico de preços."""
+"""Repositório SQLite compartilhado pelos módulos do DataWallet."""
 
 from __future__ import annotations
 
 import logging
 import math
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from config import DATABASE_PATH, SCHEMA_PATH
-from models.titulo import Titulo
-from services.consolidador import PosicaoConsolidada
+from modules.tesouro.models.titulo import Titulo
+from modules.tesouro.services.consolidador import PosicaoConsolidada
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,7 @@ class Database:
             with self._conectar() as conexao:
                 conexao.executescript(self.schema_path.read_text(encoding="utf-8"))
                 colunas_ativos = {
-                    row["name"]
-                    for row in conexao.execute("PRAGMA table_info(ativos)")
+                    row["name"] for row in conexao.execute("PRAGMA table_info(ativos)")
                 }
                 if "vencimento" not in colunas_ativos:
                     conexao.execute("ALTER TABLE ativos ADD COLUMN vencimento TEXT")
@@ -67,9 +67,9 @@ class Database:
             data_compra=date.fromisoformat(str(row["data_compra"])),
             quantidade=float(row["quantidade"]),
             preco_compra=float(row["preco_compra"]),
-            preco_atual=float(row["preco_atual"])
-            if row["preco_atual"] is not None
-            else None,
+            preco_atual=(
+                float(row["preco_atual"]) if row["preco_atual"] is not None else None
+            ),
         )
 
     def listar_titulos(self) -> list[Titulo]:
@@ -145,7 +145,9 @@ class Database:
         """Remove uma posição e seu histórico associado."""
         try:
             with self._conectar() as conexao:
-                cursor = conexao.execute("DELETE FROM titulos WHERE id = ?", (titulo_id,))
+                cursor = conexao.execute(
+                    "DELETE FROM titulos WHERE id = ?", (titulo_id,)
+                )
                 if cursor.rowcount == 0:
                     raise LookupError(f"Título {titulo_id} não encontrado.")
         except sqlite3.Error as erro:
@@ -371,7 +373,9 @@ class Database:
             return novos, atualizados
         except sqlite3.Error as erro:
             logger.exception("Erro ao salvar posições importadas.")
-            raise RuntimeError("Não foi possível salvar as posições importadas.") from erro
+            raise RuntimeError(
+                "Não foi possível salvar as posições importadas."
+            ) from erro
 
     def listar_ativos(self) -> list[dict[str, Any]]:
         """Lista posições consolidadas importadas de arquivos XLSX."""
@@ -385,4 +389,22 @@ class Database:
                 return [dict(row) for row in rows]
         except sqlite3.Error as erro:
             logger.exception("Erro ao listar ativos importados.")
-            raise RuntimeError("Não foi possível carregar os ativos importados.") from erro
+            raise RuntimeError(
+                "Não foi possível carregar os ativos importados."
+            ) from erro
+
+    def listar_historico_cotacoes_tesouro(self) -> list[dict[str, Any]]:
+        """Lista snapshots do Tesouro em ordem cronológica."""
+        try:
+            with self._conectar() as conexao:
+                rows = conexao.execute(
+                    """SELECT titulo, preco_compra, preco_venda, data_coleta
+                       FROM cotacoes_tesouro
+                       ORDER BY data_coleta, id"""
+                ).fetchall()
+                return [dict(row) for row in rows]
+        except sqlite3.Error as erro:
+            logger.exception("Erro ao carregar histórico de cotações do Tesouro.")
+            raise RuntimeError(
+                "Não foi possível carregar o histórico de cotações do Tesouro."
+            ) from erro

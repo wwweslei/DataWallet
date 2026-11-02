@@ -1,20 +1,32 @@
 """Testes do modelo, banco e cálculos financeiros do Tesouro Tracker."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import Mock
 
-from database import Database
-from models.titulo import Titulo
-from services.indicadores import IndicadoresService
-from services.tendencias import TendenciasService
-from services.carteira import CarteiraService
-from services.data_provider import JsonHttpTesouroProvider, atualizar_cotacoes
-from utils.helpers import exportar_csv, exportar_excel, exportar_pdf
+from database.repository import Database
+from modules.tesouro.models.titulo import Titulo
+from modules.tesouro.services.carteira import CarteiraService
+from modules.tesouro.services.consolidador import PosicaoConsolidada
+from modules.tesouro.services.data_provider import (
+    JsonHttpTesouroProvider,
+    atualizar_cotacoes,
+)
+from modules.tesouro.services.indicadores import IndicadoresService
+from modules.tesouro.services.tendencias import TendenciasService
+from modules.tesouro.services.tesouro_scraper import (
+    CotacaoTesouro,
+    TesouroDiretoScraper,
+)
+from modules.tesouro.utils.helpers import (
+    exportar_csv,
+    exportar_excel,
+    exportar_pdf,
+)
 
 
 def _database(tmp_path: Path) -> Database:
@@ -119,7 +131,10 @@ def test_provedor_json_atualiza_cotacao_do_titulo(monkeypatch, tmp_path: Path) -
         }
     ]
     resposta.raise_for_status.return_value = None
-    monkeypatch.setattr("services.data_provider.requests.get", Mock(return_value=resposta))
+    monkeypatch.setattr(
+        "modules.tesouro.services.data_provider.requests.get",
+        Mock(return_value=resposta),
+    )
     database = _database(tmp_path)
     titulo_id = database.salvar_titulo(
         Titulo("tesouro selic", "Tesouro Selic", date(2025, 1, 1), 1, 100.0)
@@ -153,3 +168,170 @@ def test_exportadores_criam_csv_excel_e_pdf(tmp_path: Path) -> None:
     assert exportar_csv(ranking).startswith(b"\xef\xbb\xbf")
     assert exportar_excel(service).startswith(b"PK")
     assert exportar_pdf(service).startswith(b"%PDF")
+
+
+def test_ranking_estima_cupom_e_soma_com_rendimentos(tmp_path: Path) -> None:
+    """Calcula estimativa de cupom semestral e agrega com a valorização."""
+    database = _database(tmp_path)
+    database.salvar_titulo(
+        Titulo(
+            "Tesouro IPCA+ com Juros Semestrais 2035",
+            "Tesouro IPCA+",
+            date(2025, 1, 1),
+            2,
+            900,
+            preco_atual=1000,
+        )
+    )
+    database.salvar_titulo(
+        Titulo(
+            "Tesouro Prefixado com Juros Semestrais 2035",
+            "Tesouro Prefixado",
+            date(2025, 1, 1),
+            1,
+            1000,
+            preco_atual=1100,
+        )
+    )
+    database.salvar_titulo(
+        Titulo(
+            "Tesouro Selic 2031",
+            "Tesouro Selic",
+            date(2025, 1, 1),
+            1,
+            1000,
+            preco_atual=1050,
+        )
+    )
+
+    ranking = CarteiraService(database).obter_ranking().set_index("Título")
+    ipca = ranking.loc["Tesouro IPCA+ com Juros Semestrais 2035"]
+    prefixado = ranking.loc["Tesouro Prefixado com Juros Semestrais 2035"]
+    selic = ranking.loc["Tesouro Selic 2031"]
+
+    assert ipca["Juros semestrais estimados (R$)"] == pytest.approx(
+        2000 * (np.sqrt(1.06) - 1)
+    )
+    assert prefixado["Juros semestrais estimados (R$)"] == pytest.approx(
+        1100 * (np.sqrt(1.10) - 1)
+    )
+    assert selic["Juros semestrais estimados (R$)"] == 0
+    for posicao in (ipca, prefixado, selic):
+        assert posicao["Rendimentos (R$)"] == posicao["Lucro (R$)"]
+        assert posicao["Juros + rendimentos (R$)"] == pytest.approx(
+            posicao["Juros semestrais estimados (R$)"]
+            + posicao["Rendimentos (R$)"]
+        )
+
+
+def test_ativos_importados_calculam_lucro_evolucao_com_cotacoes_tesouro(
+    tmp_path: Path,
+) -> None:
+    """Usa cotações salvas para avaliar posições importadas ao longo do tempo."""
+    database = _database(tmp_path)
+    hoje = date.today()
+    data_base = hoje - timedelta(days=3)
+    database.salvar_importacoes_consolidadas(
+        [
+            PosicaoConsolidada(
+                ticker="TESOURO SELIC 2031",
+                nome="Tesouro Selic 2031",
+                categoria="Tesouro Selic",
+                quantidade=2,
+                preco_medio=1000,
+                valor_investido=2000,
+            )
+        ],
+        [],
+    )
+    with database._conectar() as conexao:
+        conexao.execute(
+            "UPDATE ativos SET data_atualizacao = ?",
+            (data_base.isoformat(),),
+        )
+    scraper = TesouroDiretoScraper(database=database)
+    scraper.salvar_cotacoes(
+        [
+            CotacaoTesouro(
+                titulo="Tesouro Selic 2031",
+                tipo="Tesouro Selic",
+                vencimento="2031-03-01",
+                taxa_compra=None,
+                taxa_venda=None,
+                preco_compra=preco,
+                preco_venda=preco,
+                data_coleta=datetime.combine(hoje - timedelta(days=2 - indice), time(18)),
+            )
+            for indice, preco in enumerate((1050, 1100, 1150))
+        ]
+    )
+
+    service = CarteiraService(database)
+    resumo = service.obter_resumo()
+    ranking = service.obter_ranking()
+    evolucao = service.obter_evolucao()
+
+    assert resumo["valor_investido"] == 2000
+    assert resumo["valor_atual"] == 2300
+    assert resumo["lucro"] == 300
+    assert resumo["rentabilidade"] == pytest.approx(15)
+    assert ranking.iloc[0]["Atual (R$)"] == 2300
+    assert ranking.iloc[0]["Lucro (R$)"] == 300
+    assert ranking.iloc[0]["Situação"] == "Cotação do Tesouro disponível"
+    assert evolucao["valor"].tolist() == [2000, 2100, 2200, 2300]
+
+
+def test_analise_usa_historico_de_cotacoes_de_ativos_importados(
+    tmp_path: Path,
+) -> None:
+    """Disponibiliza snapshots salvos para a análise de posição importada."""
+    database = _database(tmp_path)
+    hoje = date.today()
+    database.salvar_importacoes_consolidadas(
+        [
+            PosicaoConsolidada(
+                ticker="TESOURO SELIC 2031",
+                nome="Tesouro Selic 2031",
+                categoria="Tesouro Selic",
+                quantidade=2,
+                preco_medio=1000,
+                valor_investido=2000,
+            )
+        ],
+        [],
+    )
+    with database._conectar() as conexao:
+        conexao.execute(
+            "UPDATE ativos SET data_atualizacao = ?",
+            ((hoje - timedelta(days=3)).isoformat(),),
+        )
+    TesouroDiretoScraper(database=database).salvar_cotacoes(
+        [
+            CotacaoTesouro(
+                titulo="Tesouro Selic 2031",
+                tipo="Tesouro Selic",
+                vencimento="2031-03-01",
+                taxa_compra=None,
+                taxa_venda=None,
+                preco_compra=preco,
+                preco_venda=preco,
+                data_coleta=datetime.combine(
+                    hoje - timedelta(days=2 - indice), time(18)
+                ),
+            )
+            for indice, preco in enumerate((1000, 1050, 1100))
+        ]
+    )
+
+    service = CarteiraService(database)
+    ativo = database.listar_ativos()[0]
+    registros = service.obter_historico_ativo(ativo)
+    precos = pd.Series(
+        [float(item["preco"]) for item in registros],
+        index=pd.to_datetime([item["data"] for item in registros]),
+        dtype="float64",
+    )
+    _, _, performance = service.analisar_precos(precos)
+
+    assert [item["preco"] for item in registros] == [1000, 1050, 1100]
+    assert performance["retorno_total"] == pytest.approx(10)
